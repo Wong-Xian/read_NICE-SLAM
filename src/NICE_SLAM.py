@@ -71,6 +71,7 @@ class NICE_SLAM():  # 自定义类
         self.frame_reader = get_dataset(cfg, args, self.scale)
         self.n_img = len(self.frame_reader)
         
+        # 初始化共享内存
         self.estimate_c2w_list = torch.zeros((self.n_img, 4, 4))
         self.estimate_c2w_list.share_memory_()  # 将该变量共享到多进程
 
@@ -90,6 +91,7 @@ class NICE_SLAM():  # 自定义类
         self.mapping_cnt = torch.zeros((1)).int()  # counter for mapping
         self.mapping_cnt.share_memory_()
         
+        # 将共享变量移至指定设备
         for key, val in self.shared_c.items():
             val = val.to(self.cfg['mapping']['device'])
             val.share_memory_()
@@ -106,7 +108,7 @@ class NICE_SLAM():  # 自定义类
             self.coarse_mapper = Mapper(cfg, args, self, coarse_mapper=True)# 粗网格的建图线程
         self.tracker = Tracker(cfg, args, self)         # 跟踪线程
         
-        self.print_output_desc()    # 输出基本信息
+        self.print_output_desc()    # 输出描述信息
 
     def print_output_desc(self):
         print(f"INFO: The output folder is {self.output}")
@@ -175,14 +177,13 @@ class NICE_SLAM():  # 自定义类
         """
 
         if self.coarse:
-            ckpt = torch.load(cfg['pretrained_decoders']['coarse'],
-                              map_location=cfg['mapping']['device'])
+            ckpt = torch.load(cfg['pretrained_decoders']['coarse'], map_location=cfg['mapping']['device'])
             coarse_dict = {}
             for key, val in ckpt['model'].items():
                 if ('decoder' in key) and ('encoder' not in key):
                     key = key[8:]
                     coarse_dict[key] = val
-            self.shared_decoders.coarse_decoder.load_state_dict(coarse_dict)
+            self.shared_decoders.coarse_decoder.load_state_dict(coarse_dict)    # 将配置好的字典装入粗网络的状态字典
 
         ckpt = torch.load(cfg['pretrained_decoders']['middle_fine'], map_location=cfg['mapping']['device'])
         middle_dict = {}
@@ -196,8 +197,8 @@ class NICE_SLAM():  # 自定义类
                 elif 'fine' in key:
                     key = key[8+5:]
                     fine_dict[key] = val
-        self.shared_decoders.middle_decoder.load_state_dict(middle_dict)
-        self.shared_decoders.fine_decoder.load_state_dict(fine_dict)
+        self.shared_decoders.middle_decoder.load_state_dict(middle_dict)    # 配置好的字典装入状态字典
+        self.shared_decoders.fine_decoder.load_state_dict(fine_dict)        # 配置好的字典装入状态字典
 
     def grid_init(self, cfg):
         """
@@ -252,7 +253,7 @@ class NICE_SLAM():  # 自定义类
         fine_val_shape[0], fine_val_shape[2] = fine_val_shape[2], fine_val_shape[0]
         self.fine_val_shape = fine_val_shape
         val_shape = [1, c_dim, *fine_val_shape]
-        fine_val = torch.zeros(val_shape).normal_(mean=0, std=0.0001)
+        fine_val = torch.zeros(val_shape).normal_(mean=0, std=0.0001)   # 采用更小的标准差进行初始化
         c[fine_key] = fine_val
 
         color_key = 'grid_color'
@@ -273,7 +274,7 @@ class NICE_SLAM():  # 自定义类
             rank (int): Thread ID.
         """
 
-        # should wait until the mapping of first frame is finished
+        # should wait until the mapping of first frame is finished 第一帧之后才开始tracking
         while (1):
             if self.mapping_first_frame[0] == 1:
                 break

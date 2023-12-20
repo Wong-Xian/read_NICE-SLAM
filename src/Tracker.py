@@ -16,8 +16,7 @@ from src.utils.Visualizer import Visualizer
 
 
 class Tracker(object):
-    def __init__(self, cfg, args, slam
-                 ):
+    def __init__(self, cfg, args, slam):
         self.cfg = cfg
         self.args = args
 
@@ -61,8 +60,7 @@ class Tracker(object):
         self.frame_reader = get_dataset(
             cfg, args, self.scale, device=self.device)
         self.n_img = len(self.frame_reader)
-        self.frame_loader = DataLoader(
-            self.frame_reader, batch_size=1, shuffle=False, num_workers=1)
+        self.frame_loader = DataLoader(self.frame_reader, batch_size=1, shuffle=False, num_workers=1)
         self.visualizer = Visualizer(freq=cfg['tracking']['vis_freq'], inside_freq=cfg['tracking']['vis_inside_freq'],
                                      vis_dir=os.path.join(self.output, 'vis' if 'Demo' in self.output else 'tracking_vis'),
                                      renderer=self.renderer, verbose=self.verbose, device=self.device)
@@ -184,21 +182,18 @@ class Tracker(object):
             if idx == 0 or self.gt_camera:
                 c2w = gt_c2w
                 if not self.no_vis_on_first_frame:
-                    self.visualizer.vis(
-                        idx, 0, gt_depth, gt_color, c2w, self.c, self.decoders)
+                    self.visualizer.vis(idx, 0, gt_depth, gt_color, c2w, self.c, self.decoders)
 
             else:
                 gt_camera_tensor = get_tensor_from_camera(gt_c2w)
                 if self.const_speed_assumption and idx-2 >= 0:
                     pre_c2w = pre_c2w.float()
-                    delta = pre_c2w@self.estimate_c2w_list[idx-2].to(
-                        device).float().inverse()
+                    delta = pre_c2w@self.estimate_c2w_list[idx-2].to(device).float().inverse()
                     estimated_new_cam_c2w = delta@pre_c2w
                 else:
                     estimated_new_cam_c2w = pre_c2w
 
-                camera_tensor = get_tensor_from_camera(
-                    estimated_new_cam_c2w.detach())
+                camera_tensor = get_tensor_from_camera(estimated_new_cam_c2w.detach())
                 if self.seperate_LR:
                     camera_tensor = camera_tensor.to(device).detach()
                     T = camera_tensor[-3:]
@@ -212,14 +207,12 @@ class Tracker(object):
                     optimizer_camera = torch.optim.Adam([{'params': cam_para_list_T, 'lr': self.cam_lr},
                                                          {'params': cam_para_list_quad, 'lr': self.cam_lr*0.2}])
                 else:
-                    camera_tensor = Variable(
-                        camera_tensor.to(device), requires_grad=True)
+                    camera_tensor = Variable(camera_tensor.to(device), requires_grad=True)
                     cam_para_list = [camera_tensor]
                     optimizer_camera = torch.optim.Adam(
                         cam_para_list, lr=self.cam_lr)
 
-                initial_loss_camera_tensor = torch.abs(
-                    gt_camera_tensor.to(device)-camera_tensor).mean().item()
+                initial_loss_camera_tensor = torch.abs(gt_camera_tensor.to(device)-camera_tensor).mean().item()
                 candidate_cam_tensor = None
                 current_min_loss = 10000000000.
                 for cam_iter in range(self.num_cam_iters):
@@ -235,8 +228,7 @@ class Tracker(object):
                     if cam_iter == 0:
                         initial_loss = loss
 
-                    loss_camera_tensor = torch.abs(
-                        gt_camera_tensor.to(device)-camera_tensor).mean().item()
+                    loss_camera_tensor = torch.abs(gt_camera_tensor.to(device)-camera_tensor).mean().item()
                     if self.verbose:
                         if cam_iter == self.num_cam_iters-1:
                             print(

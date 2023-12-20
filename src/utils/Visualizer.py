@@ -21,8 +21,7 @@ class Visualizer(object):
         self.inside_freq = inside_freq
         os.makedirs(f'{vis_dir}', exist_ok=True)
 
-    def vis(self, idx, iter, gt_depth, gt_color, c2w_or_camera_tensor, c,
-            decoders):
+    def vis(self, idx, iter, gt_depth, gt_color, c2w_or_camera_tensor, c, decoders):
         """
         Visualization of depth, color images and save to file.
 

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from src.common import normalize_3d_coordinate
 
-
+# 在 MLP 类的初始化函数中 被实例化
 class GaussianFourierFeatureTransform(torch.nn.Module):
     """
     Modified based on the implementation of Gaussian Fourier feature mapping.
@@ -18,8 +18,7 @@ class GaussianFourierFeatureTransform(torch.nn.Module):
         super().__init__()
 
         if learnable:
-            self._B = nn.Parameter(torch.randn(
-                (num_input_channels, mapping_size)) * scale)
+            self._B = nn.Parameter(torch.randn((num_input_channels, mapping_size)) * scale)
         else:
             self._B = torch.randn((num_input_channels, mapping_size)) * scale
 
@@ -29,11 +28,11 @@ class GaussianFourierFeatureTransform(torch.nn.Module):
         x = x @ self._B.to(x.device)
         return torch.sin(x)
 
-
+# 在 MLP 类的初始化函数中 被实例化
 class Nerf_positional_embedding(torch.nn.Module):
     """
     Nerf positional embedding.
-
+    原 NeRF 的位置编码
     """
 
     def __init__(self, multires, log_sampling=True):
@@ -48,37 +47,33 @@ class Nerf_positional_embedding(torch.nn.Module):
 
     def forward(self, x):
         x = x.squeeze(0)
-        assert x.dim() == 2, 'Expected 2D input (got {}D input)'.format(
-            x.dim())
+        assert x.dim() == 2, 'Expected 2D input (got {}D input)'.format(x.dim())# 确保输入 x 是2维的
 
         if self.log_sampling:
-            freq_bands = 2.**torch.linspace(0.,
-                                            self.max_freq, steps=self.N_freqs)
+            freq_bands = 2.**torch.linspace(0., self.max_freq, steps=self.N_freqs)
         else:
-            freq_bands = torch.linspace(
-                2.**0., 2.**self.max_freq, steps=self.N_freqs)
-        output = []
+            freq_bands = torch.linspace(2.**0., 2.**self.max_freq, steps=self.N_freqs)
+        output = [] # 记录 x sin(x) cos(x)
         if self.include_input:
             output.append(x)
         for freq in freq_bands:
             for p_fn in self.periodic_fns:
                 output.append(p_fn(x * freq))
-        ret = torch.cat(output, dim=1)
+        ret = torch.cat(output, dim=1) # 维度改为1
         return ret
 
-
+# 实现标准全链接层，带有自定义权重初始化和激活函数
 class DenseLayer(nn.Linear):
     def __init__(self, in_dim: int, out_dim: int, activation: str = "relu", *args, **kwargs) -> None:
         self.activation = activation
         super().__init__(in_dim, out_dim, *args, **kwargs)
 
-    def reset_parameters(self) -> None:
-        torch.nn.init.xavier_uniform_(
-            self.weight, gain=torch.nn.init.calculate_gain(self.activation))
+    def reset_parameters(self) -> None:# 用 xavier 方法初始化权重和偏置，提升模型性能
+        torch.nn.init.xavier_uniform_(self.weight, gain=torch.nn.init.calculate_gain(self.activation))
         if self.bias is not None:
             torch.nn.init.zeros_(self.bias)
 
-
+# 修改输入向量的形状
 class Same(nn.Module):
     def __init__(self):
         super().__init__()
@@ -88,6 +83,7 @@ class Same(nn.Module):
         return x
 
 
+# 解码点坐标，生成颜色、输出，在 NICE 类的初始化函数中调用
 class MLP(nn.Module):
     """
     Decoder. Point coordinates not only used in sampling the feature grids, but also as MLP input.
@@ -121,26 +117,21 @@ class MLP(nn.Module):
         self.skips = skips
 
         if c_dim != 0:
-            self.fc_c = nn.ModuleList([
-                nn.Linear(c_dim, hidden_size) for i in range(n_blocks)
-            ])
+            self.fc_c = nn.ModuleList([nn.Linear(c_dim, hidden_size) for i in range(n_blocks)])
 
         if pos_embedding_method == 'fourier':
             embedding_size = 93
-            self.embedder = GaussianFourierFeatureTransform(
-                dim, mapping_size=embedding_size, scale=25)
+            self.embedder = GaussianFourierFeatureTransform(dim, mapping_size=embedding_size, scale=25)
         elif pos_embedding_method == 'same':
             embedding_size = 3
             self.embedder = Same()
         elif pos_embedding_method == 'nerf':
             if 'color' in name:
                 multires = 10
-                self.embedder = Nerf_positional_embedding(
-                    multires, log_sampling=True)
+                self.embedder = Nerf_positional_embedding(multires, log_sampling=True)
             else:
                 multires = 5
-                self.embedder = Nerf_positional_embedding(
-                    multires, log_sampling=False)
+                self.embedder = Nerf_positional_embedding(multires, log_sampling=False)
             embedding_size = multires*6+3
         elif pos_embedding_method == 'fc_relu':
             embedding_size = 93
@@ -152,11 +143,11 @@ class MLP(nn.Module):
              else DenseLayer(hidden_size + embedding_size, hidden_size, activation="relu") for i in range(n_blocks-1)])
 
         if self.color:
-            self.output_linear = DenseLayer(
-                hidden_size, 4, activation="linear")
+            # 是颜色解码器，输出4维，3个RGB值，1个occupancy值
+            self.output_linear = DenseLayer(hidden_size, 4, activation="linear")
         else:
-            self.output_linear = DenseLayer(
-                hidden_size, 1, activation="linear")
+            # 不是颜色解码器，输出1维，occupancy值
+            self.output_linear = DenseLayer(hidden_size, 1, activation="linear")
 
         if not leaky:
             self.actvn = F.relu
@@ -165,6 +156,7 @@ class MLP(nn.Module):
 
         self.sample_mode = sample_mode
 
+    # 将点坐标标准化，使用 grid_sample 方法采样
     def sample_grid_feature(self, p, c):
         p_nor = normalize_3d_coordinate(p.clone(), self.bound)
         p_nor = p_nor.unsqueeze(0)
@@ -175,15 +167,14 @@ class MLP(nn.Module):
         return c
 
     def forward(self, p, c_grid=None):
+        # c_dim 不为0的时候（存在特征维度），从 c_grid 中采样
         if self.c_dim != 0:
-            c = self.sample_grid_feature(
-                p, c_grid['grid_' + self.name]).transpose(1, 2).squeeze(0)
+            c = self.sample_grid_feature(p, c_grid['grid_' + self.name]).transpose(1, 2).squeeze(0)
 
-            if self.concat_feature:
+            if self.concat_feature:# fine 层需要把特征连接起来
                 # only happen to fine decoder, get feature from middle level and concat to the current feature
                 with torch.no_grad():
-                    c_middle = self.sample_grid_feature(
-                        p, c_grid['grid_middle']).transpose(1, 2).squeeze(0)
+                    c_middle = self.sample_grid_feature(p, c_grid['grid_middle']).transpose(1, 2).squeeze(0)
                 c = torch.cat([c, c_middle], dim=1)
 
         p = p.float()
@@ -334,9 +325,13 @@ class NICE(nn.Module):
             raw[..., -1] = fine_occ+middle_occ
             return raw
         elif stage == 'color':
+            # 用 fine_decoder 获取精细层【占用率】
             fine_occ = self.fine_decoder(p, c_grid)
+            # 用 color_decoder 获取【颜色信息】
             raw = self.color_decoder(p, c_grid)
+            # 获取中层占据信息
             middle_occ = self.middle_decoder(p, c_grid)
             middle_occ = middle_occ.squeeze(0)
+            # 最后一列 占据值为 fine_occ + middle_occ
             raw[..., -1] = fine_occ+middle_occ
             return raw
