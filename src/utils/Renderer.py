@@ -233,12 +233,10 @@ class Renderer(object):
                 rays_d_batch = rays_d[i:i+ray_batch_size]
                 rays_o_batch = rays_o[i:i+ray_batch_size]
                 if gt_depth is None:
-                    ret = self.render_batch_ray(
-                        c, decoders, rays_d_batch, rays_o_batch, device, stage, gt_depth=None)
+                    ret = self.render_batch_ray(c, decoders, rays_d_batch, rays_o_batch, device, stage, gt_depth=None)
                 else:
                     gt_depth_batch = gt_depth[i:i+ray_batch_size]
-                    ret = self.render_batch_ray(
-                        c, decoders, rays_d_batch, rays_o_batch, device, stage, gt_depth=gt_depth_batch)
+                    ret = self.render_batch_ray(c, decoders, rays_d_batch, rays_o_batch, device, stage, gt_depth=gt_depth_batch)
 
                 depth, uncertainty, color = ret
                 depth_list.append(depth.double())

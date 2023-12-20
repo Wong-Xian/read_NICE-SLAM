@@ -73,7 +73,6 @@ def get_model(cfg, nice=True):
     """
 
     method = 'conv_onet'
-    model = method_dict[method].config.get_model(
-        cfg,  nice=nice)
+    model = method_dict[method].config.get_model(cfg,  nice=nice)   # conv_onet 模块里的 config 的 get_model 方法 返回网络模型
 
     return model

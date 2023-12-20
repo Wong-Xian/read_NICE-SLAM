@@ -49,8 +49,7 @@ def get_dataset(cfg, args, scale, device='cuda:0'):
 
 
 class BaseDataset(Dataset):
-    def __init__(self, cfg, args, scale, device='cuda:0'
-                 ):
+    def __init__(self, cfg, args, scale, device='cuda:0'):
         super(BaseDataset, self).__init__()
         self.name = cfg['dataset']
         self.device = device

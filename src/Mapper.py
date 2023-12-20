@@ -19,8 +19,7 @@ class Mapper(object):
 
     """
 
-    def __init__(self, cfg, args, slam, coarse_mapper=False
-                 ):
+    def __init__(self, cfg, args, slam, coarse_mapper=False):
 
         self.cfg = cfg
         self.args = args
@@ -81,10 +80,10 @@ class Mapper(object):
 
         self.keyframe_dict = []
         self.keyframe_list = []
-        self.frame_reader = get_dataset(
-            cfg, args, self.scale, device=self.device)
-        self.n_img = len(self.frame_reader)
-        if 'Demo' not in self.output:  # disable this visualization in demo
+        self.frame_reader = get_dataset(cfg, args, self.scale, device=self.device)  # 获取数据集 数据集类实例化的对象
+        self.n_img = len(self.frame_reader)     # 获取数据集中的图像数量
+        if 'Demo' not in self.output:
+            # 初始化可视化对象
             self.visualizer = Visualizer(freq=cfg['mapping']['vis_freq'], inside_freq=cfg['mapping']['vis_inside_freq'],
                                          vis_dir=os.path.join(self.output, 'mapping_vis'), renderer=self.renderer,
                                          verbose=self.verbose, device=self.device)
@@ -269,7 +268,7 @@ class Mapper(object):
         if len(keyframe_list) > 0:
             optimize_frame = optimize_frame + [len(keyframe_list)-1]
             oldest_frame = min(optimize_frame)
-        optimize_frame += [-1]
+        optimize_frame += [-1]  # 把-1加到原列表的末尾
 
         if self.save_selected_keyframes_info:
             keyframes_info = []
@@ -289,10 +288,13 @@ class Mapper(object):
         pixs_per_image = self.mapping_pixels//len(optimize_frame)
 
         decoders_para_list = []
+        
+        # 定义 4 个 list
         coarse_grid_para = []
         middle_grid_para = []
         fine_grid_para = []
         color_grid_para = []
+        
         gt_depth_np = cur_gt_depth.cpu().numpy()
         if self.nice:
             if self.frustum_feature_selection:
@@ -312,15 +314,13 @@ class Mapper(object):
                         color_grid_para.append(val)
 
                 else:
-                    mask = self.get_mask_from_c2w(
-                        mask_c2w, key, val.shape[2:], gt_depth_np)
-                    mask = torch.from_numpy(mask).permute(2, 1, 0).unsqueeze(
-                        0).unsqueeze(0).repeat(1, val.shape[1], 1, 1, 1)
+                    mask = self.get_mask_from_c2w(mask_c2w, key, val.shape[2:], gt_depth_np)
+                    # 下一行代码 将一个NumPy数组转换为PyTorch张量，并将其维度重新排列以适应特定的数据格式，然后在张量的第一个和第二个维度上添加新维度，并在张量的第三个和第四个维度上重复元素
+                    mask = torch.from_numpy(mask).permute(2, 1, 0).unsqueeze(0).unsqueeze(0).repeat(1, val.shape[1], 1, 1, 1)
                     val = val.to(device)
                     # val_grad is the optimizable part, other parameters will be fixed
                     val_grad = val[mask].clone()
-                    val_grad = Variable(val_grad.to(
-                        device), requires_grad=True)
+                    val_grad = Variable(val_grad.to(device), requires_grad=True)
                     masked_c_grad[key] = val_grad
                     masked_c_grad[key+'mask'] = mask
                     if key == 'grid_coarse':
@@ -339,8 +339,7 @@ class Mapper(object):
             if not self.fix_color:
                 decoders_para_list += list(
                     self.decoders.color_decoder.parameters())
-        else:
-            # imap*, single MLP
+        else:   # iMAP 的情况
             decoders_para_list += list(self.decoders.parameters())
 
         if self.BA:
@@ -348,7 +347,7 @@ class Mapper(object):
             gt_camera_tensor_list = []
             for frame in optimize_frame:
                 # the oldest frame should be fixed to avoid drifting
-                if frame != oldest_frame:
+                if frame != oldest_frame:   # 不是最初帧的情况
                     if frame != -1:
                         c2w = keyframe_dict[frame]['est_c2w']
                         gt_c2w = keyframe_dict[frame]['gt_c2w']
@@ -363,7 +362,7 @@ class Mapper(object):
                     gt_camera_tensor_list.append(gt_camera_tensor)
 
         if self.nice:
-            if self.BA:
+            if self.BA: # BA 是 true 的情况（默认是 false）
                 # The corresponding lr will be set according to which stage the optimization is in
                 optimizer = torch.optim.Adam([{'params': decoders_para_list, 'lr': 0},
                                               {'params': coarse_grid_para, 'lr': 0},
@@ -377,14 +376,12 @@ class Mapper(object):
                                               {'params': middle_grid_para, 'lr': 0},
                                               {'params': fine_grid_para, 'lr': 0},
                                               {'params': color_grid_para, 'lr': 0}])
-        else:
-            # imap*, single MLP
+        else:   # imap*, single MLP
             if self.BA:
                 optimizer = torch.optim.Adam([{'params': decoders_para_list, 'lr': 0},
                                               {'params': camera_tensor_list, 'lr': 0}])
             else:
-                optimizer = torch.optim.Adam(
-                    [{'params': decoders_para_list, 'lr': 0}])
+                optimizer = torch.optim.Adam([{'params': decoders_para_list, 'lr': 0}])
             from torch.optim.lr_scheduler import StepLR
             scheduler = StepLR(optimizer, step_size=200, gamma=0.8)
 
@@ -540,23 +537,25 @@ class Mapper(object):
             return None
 
     def run(self):
+        # 保存参数
         cfg = self.cfg
-        idx, gt_color, gt_depth, gt_c2w = self.frame_reader[0]
+        idx, gt_color, gt_depth, gt_c2w = self.frame_reader[0]  # 取数据集中的第一个样本
 
-        self.estimate_c2w_list[0] = gt_c2w.cpu()
-        init = True
+        self.estimate_c2w_list[0] = gt_c2w.cpu()    # 保存相机-世界的坐标变化
+        init = True # 定义一个flag
         prev_idx = -1
-        while (1):
-            while True:
-                idx = self.idx[0].clone()
-                if idx == self.n_img-1:
+        while (1):  # 大循环 通过内部的 break 来跳出
+            while True: # 小循环 通过内部的 break 来跳出
+                idx = self.idx[0].clone()   # 对象属性idx的第一个值，克隆一份给局部变量idx
+                if idx == self.n_img-1: # 获取到的值是最后一个值，即列表中只有1个值
                     break
+                    
+                # 同步方法
                 if self.sync_method == 'strict':
-                    if idx % self.every_frame == 0 and idx != prev_idx:
+                    if idx % self.every_frame == 0 and idx != prev_idx:# 是关键帧 且 不等于上一帧
                         break
-
                 elif self.sync_method == 'loose':
-                    if idx == 0 or idx >= prev_idx+self.every_frame//2:
+                    if idx == 0 or idx >= prev_idx+self.every_frame//2:# 不是第一帧 或 当前
                         break
                 elif self.sync_method == 'free':
                     break
@@ -569,9 +568,9 @@ class Mapper(object):
                 print(prefix+"Mapping Frame ", idx.item())
                 print(Style.RESET_ALL)
 
-            _, gt_color, gt_depth, gt_c2w = self.frame_reader[idx]
+            _, gt_color, gt_depth, gt_c2w = self.frame_reader[idx]  # 获取 frame_reader 中 idx 样本的数据
 
-            if not init:
+            if not init:    # init 为 false 时
                 lr_factor = cfg['mapping']['lr_factor']
                 num_joint_iters = cfg['mapping']['iters']
 
@@ -590,31 +589,27 @@ class Mapper(object):
                     else:
                         outer_joint_iters = 3
 
-            else:
+            else:   # init 为 true 时
                 outer_joint_iters = 1
                 lr_factor = cfg['mapping']['lr_first_factor']
                 num_joint_iters = cfg['mapping']['iters_first']
 
-            cur_c2w = self.estimate_c2w_list[idx].to(self.device)
-            num_joint_iters = num_joint_iters//outer_joint_iters
-            for outer_joint_iter in range(outer_joint_iters):
+            cur_c2w = self.estimate_c2w_list[idx].to(self.device)# 把估计的相机-世界坐标变换 转换成 GPU 张量，保存在 cur_c2w
+            num_joint_iters = num_joint_iters//outer_joint_iters # 整除，减少内循环迭代次数
+            for outer_joint_iter in range(outer_joint_iters):   # 迭代
+                # keyframe_list 长度大于4，config 文件中BA 为true，当前是精建图模式，三个条件同时满足，BA为true
+                self.BA = (len(self.keyframe_list) > 4) and cfg['mapping']['BA'] and (not self.coarse_mapper)
 
-                self.BA = (len(self.keyframe_list) > 4) and cfg['mapping']['BA'] and (
-                    not self.coarse_mapper)
-
-                _ = self.optimize_map(num_joint_iters, lr_factor, idx, gt_color, gt_depth,
+                if self.BA: # 需要进行 BA 的情况
+                    cur_c2w = self.optimize_map(num_joint_iters, lr_factor, idx, gt_color, gt_depth,
                                       gt_c2w, self.keyframe_dict, self.keyframe_list, cur_c2w=cur_c2w)
-                if self.BA:
-                    cur_c2w = _
-                    self.estimate_c2w_list[idx] = cur_c2w
+                    self.estimate_c2w_list[idx] = cur_c2w   # 保存旋转矩阵
 
                 # add new frame to keyframe set
                 if outer_joint_iter == outer_joint_iters-1:
-                    if (idx % self.keyframe_every == 0 or (idx == self.n_img-2)) \
-                            and (idx not in self.keyframe_list):
+                    if (idx % self.keyframe_every == 0 or (idx == self.n_img-2)) and (idx not in self.keyframe_list):
                         self.keyframe_list.append(idx)
-                        self.keyframe_dict.append({'gt_c2w': gt_c2w.cpu(), 'idx': idx, 'color': gt_color.cpu(
-                        ), 'depth': gt_depth.cpu(), 'est_c2w': cur_c2w.clone()})
+                        self.keyframe_dict.append({'gt_c2w':gt_c2w.cpu(), 'idx':idx, 'color':gt_color.cpu(), 'depth':gt_depth.cpu(), 'est_c2w':cur_c2w.clone()})
 
             if self.low_gpu_mem:
                 torch.cuda.empty_cache()
@@ -623,10 +618,10 @@ class Mapper(object):
             # mapping of first frame is done, can begin tracking
             self.mapping_first_frame[0] = 1
 
-            if not self.coarse_mapper:
+            if not self.coarse_mapper:  # 不是粗糙地图的情况
                 if ((not (idx == 0 and self.no_log_on_first_frame)) and idx % self.ckpt_freq == 0) \
                         or idx == self.n_img-1:
-                    self.logger.log(idx, self.keyframe_dict, self.keyframe_list,
+                    self.logger.log(idx, self.keyframe_dict, self.keyframe_list,# 记录当前关键帧信息
                                     selected_keyframes=self.selected_keyframes
                                     if self.save_selected_keyframes_info else None)
 
@@ -634,10 +629,10 @@ class Mapper(object):
                 self.mapping_cnt[0] += 1
 
                 if (idx % self.mesh_freq == 0) and (not (idx == 0 and self.no_mesh_on_first_frame)):
-                    mesh_out_file = f'{self.output}/mesh/{idx:05d}_mesh.ply'
+                    mesh_out_file = f'{self.output}/mesh/{idx:05d}_mesh.ply'    # 生成输出文件的文件名的字符串
                     self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict, self.estimate_c2w_list,
                                          idx,  self.device, show_forecast=self.mesh_coarse_level,
-                                         clean_mesh=self.clean_mesh, get_mask_use_all_frames=False)
+                                         clean_mesh=self.clean_mesh, get_mask_use_all_frames=False)# 生成mesh文件
 
                 if idx == self.n_img-1:
                     mesh_out_file = f'{self.output}/mesh/final_mesh.ply'

@@ -17,44 +17,47 @@ from src.utils.Renderer import Renderer
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
-class NICE_SLAM():
+class NICE_SLAM():  # 自定义类
     """
     NICE_SLAM main class.
     Mainly allocate shared resources, and dispatch mapping and tracking process.
     """
 
-    def __init__(self, cfg, args):
+    def __init__(self, cfg, args):  # 构造函数
 
         self.cfg = cfg
         self.args = args
         self.nice = args.nice
 
+        # 保存 cfg 中的参数 即从命令行中获得的参数
         self.coarse = cfg['coarse']
         self.occupancy = cfg['occupancy']
         self.low_gpu_mem = cfg['low_gpu_mem']
         self.verbose = cfg['verbose']
         self.dataset = cfg['dataset']
         self.coarse_bound_enlarge = cfg['model']['coarse_bound_enlarge']
+        
         if args.output is None:
             self.output = cfg['data']['output']
         else:
             self.output = args.output
-        self.ckptsdir = os.path.join(self.output, 'ckpts')
-        os.makedirs(self.output, exist_ok=True)
-        os.makedirs(self.ckptsdir, exist_ok=True)
-        os.makedirs(f'{self.output}/mesh', exist_ok=True)
-        self.H, self.W, self.fx, self.fy, self.cx, self.cy = cfg['cam']['H'], cfg['cam'][
-            'W'], cfg['cam']['fx'], cfg['cam']['fy'], cfg['cam']['cx'], cfg['cam']['cy']
-        self.update_cam()
+        
+        self.ckptsdir = os.path.join(self.output, 'ckpts')  # 这个变量保存的是 output 和 'ckpts' 两个字符串的拼接
+        os.makedirs(self.output, exist_ok=True)             # 创建目录
+        os.makedirs(self.ckptsdir, exist_ok=True)           # 创建目录
+        os.makedirs(f'{self.output}/mesh', exist_ok=True)   # 创建目录
+        
+        # 保存相机参数
+        self.H, self.W, self.fx, self.fy, self.cx, self.cy = cfg['cam']['H'], cfg['cam']['W'], cfg['cam']['fx'], cfg['cam']['fy'], cfg['cam']['cx'], cfg['cam']['cy']
+        self.update_cam()   # 更新相机参数
 
-        model = config.get_model(cfg,  nice=self.nice)
-        self.shared_decoders = model
-
+        model = config.get_model(cfg, nice=self.nice)  # 获取神经网络的模板
+        self.shared_decoders = model    # 保存为对象属性
         self.scale = cfg['scale']
-
-        self.load_bound(cfg)
+        self.load_bound(cfg)    # 加载场景边界参数
+        
         if self.nice:
-            self.load_pretrain(cfg)
+            self.load_pretrain(cfg) # 加载预训练的网络
             self.grid_init(cfg)
         else:
             self.shared_c = {}
@@ -67,35 +70,43 @@ class NICE_SLAM():
 
         self.frame_reader = get_dataset(cfg, args, self.scale)
         self.n_img = len(self.frame_reader)
+        
         self.estimate_c2w_list = torch.zeros((self.n_img, 4, 4))
-        self.estimate_c2w_list.share_memory_()
+        self.estimate_c2w_list.share_memory_()  # 将该变量共享到多进程
 
         self.gt_c2w_list = torch.zeros((self.n_img, 4, 4))
         self.gt_c2w_list.share_memory_()
+        
         self.idx = torch.zeros((1)).int()
         self.idx.share_memory_()
+        
         self.mapping_first_frame = torch.zeros((1)).int()
         self.mapping_first_frame.share_memory_()
+        
         # the id of the newest frame Mapper is processing
         self.mapping_idx = torch.zeros((1)).int()
         self.mapping_idx.share_memory_()
+        
         self.mapping_cnt = torch.zeros((1)).int()  # counter for mapping
         self.mapping_cnt.share_memory_()
+        
         for key, val in self.shared_c.items():
             val = val.to(self.cfg['mapping']['device'])
             val.share_memory_()
             self.shared_c[key] = val
-        self.shared_decoders = self.shared_decoders.to(
-            self.cfg['mapping']['device'])
+        
+        self.shared_decoders = self.shared_decoders.to(self.cfg['mapping']['device'])
         self.shared_decoders.share_memory()
-        self.renderer = Renderer(cfg, args, self)
-        self.mesher = Mesher(cfg, args, self)
-        self.logger = Logger(cfg, args, self)
-        self.mapper = Mapper(cfg, args, self, coarse_mapper=False)
+        
+        self.renderer = Renderer(cfg, args, self)       # 渲染线程
+        self.mesher = Mesher(cfg, args, self)           # 网格线程
+        self.logger = Logger(cfg, args, self)           # 日志线程
+        self.mapper = Mapper(cfg, args, self, coarse_mapper=False)  # 建图线程
         if self.coarse:
-            self.coarse_mapper = Mapper(cfg, args, self, coarse_mapper=True)
-        self.tracker = Tracker(cfg, args, self)
-        self.print_output_desc()
+            self.coarse_mapper = Mapper(cfg, args, self, coarse_mapper=True)# 粗网格的建图线程
+        self.tracker = Tracker(cfg, args, self)         # 跟踪线程
+        
+        self.print_output_desc()    # 输出基本信息
 
     def print_output_desc(self):
         print(f"INFO: The output folder is {self.output}")
@@ -137,13 +148,12 @@ class NICE_SLAM():
     def load_bound(self, cfg):
         """
         Pass the scene bound parameters to different decoders and self.
-
+        加载场景边界参数
         Args:
             cfg (dict): parsed config dict.
         """
         # scale the bound if there is a global scaling factor
-        self.bound = torch.from_numpy(
-            np.array(cfg['mapping']['bound'])*self.scale)
+        self.bound = torch.from_numpy(np.array(cfg['mapping']['bound'])*self.scale)
         bound_divisible = cfg['grid_len']['bound_divisible']
         # enlarge the bound a bit to allow it divisible by bound_divisible
         self.bound[:, 1] = (((self.bound[:, 1]-self.bound[:, 0]) /
@@ -174,10 +184,10 @@ class NICE_SLAM():
                     coarse_dict[key] = val
             self.shared_decoders.coarse_decoder.load_state_dict(coarse_dict)
 
-        ckpt = torch.load(cfg['pretrained_decoders']['middle_fine'],
-                          map_location=cfg['mapping']['device'])
+        ckpt = torch.load(cfg['pretrained_decoders']['middle_fine'], map_location=cfg['mapping']['device'])
         middle_dict = {}
         fine_dict = {}
+
         for key, val in ckpt['model'].items():
             if ('decoder' in key) and ('encoder' not in key):
                 if 'coarse' in key:
@@ -196,13 +206,20 @@ class NICE_SLAM():
         Args:
             cfg (dict): parsed config dict.
         """
+        # 初始化粗网格
         if self.coarse:
             coarse_grid_len = cfg['grid_len']['coarse']
             self.coarse_grid_len = coarse_grid_len
+        
+        # 初始化中网格
         middle_grid_len = cfg['grid_len']['middle']
         self.middle_grid_len = middle_grid_len
+        
+        # 初始化精网格
         fine_grid_len = cfg['grid_len']['fine']
         self.fine_grid_len = fine_grid_len
+        
+        # 初始化颜色网格
         color_grid_len = cfg['grid_len']['color']
         self.color_grid_len = color_grid_len
 
@@ -215,12 +232,11 @@ class NICE_SLAM():
 
         if self.coarse:
             coarse_key = 'grid_coarse'
-            coarse_val_shape = list(
-                map(int, (xyz_len*self.coarse_bound_enlarge/coarse_grid_len).tolist()))
-            coarse_val_shape[0], coarse_val_shape[2] = coarse_val_shape[2], coarse_val_shape[0]
+            coarse_val_shape = list(map(int, (xyz_len*self.coarse_bound_enlarge/coarse_grid_len).tolist()))# 计算出需要多少个粗粒度表面网格才能覆盖整个数据集
+            coarse_val_shape[0], coarse_val_shape[2] = coarse_val_shape[2], coarse_val_shape[0]# 第一个和第三个交换位置
             self.coarse_val_shape = coarse_val_shape
-            val_shape = [1, c_dim, *coarse_val_shape]
-            coarse_val = torch.zeros(val_shape).normal_(mean=0, std=0.01)
+            val_shape = [1, c_dim, *coarse_val_shape]   # *coarse_val_shape表示将coarse_val_shape中的每个元素作为独立的参数传递给val_shape
+            coarse_val = torch.zeros(val_shape).normal_(mean=0, std=0.01)# 这个大张量将用于表示数据集中的粗粒度表面，其中每个元素表示一个粗粒度表面网格的权重
             c[coarse_key] = coarse_val
 
         middle_key = 'grid_middle'
@@ -249,7 +265,7 @@ class NICE_SLAM():
 
         self.shared_c = c
 
-    def tracking(self, rank):
+    def tracking(self, rank):   # 跟踪线程
         """
         Tracking Thread.
 
@@ -265,7 +281,7 @@ class NICE_SLAM():
 
         self.tracker.run()
 
-    def mapping(self, rank):
+    def mapping(self, rank):    # 建图线程
         """
         Mapping Thread. (updates middle, fine, and color level)
 
@@ -275,7 +291,7 @@ class NICE_SLAM():
 
         self.mapper.run()
 
-    def coarse_mapping(self, rank):
+    def coarse_mapping(self, rank): # 粗地图建图线程
         """
         Coarse mapping Thread. (updates coarse level)
 
@@ -287,9 +303,8 @@ class NICE_SLAM():
 
     def run(self):
         """
-        Dispatch Threads.
+        Dispatch Threads. 创建多线程
         """
-
         processes = []
         for rank in range(3):
             if rank == 0:
