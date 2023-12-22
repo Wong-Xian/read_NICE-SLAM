@@ -128,8 +128,7 @@ def get_samples(H0, H1, W0, W1, n, H, W, fx, fy, cx, cy, c2w, depth, color, devi
     c2w is its camera pose and depth/color is the corresponding image tensor.
 
     """
-    i, j, sample_depth, sample_color = get_sample_uv(
-        H0, H1, W0, W1, n, depth, color, device=device)
+    i, j, sample_depth, sample_color = get_sample_uv(H0, H1, W0, W1, n, depth, color, device=device)
     rays_o, rays_d = get_rays_from_uv(i, j, c2w, H, W, fx, fy, cx, cy, device)
     return rays_o, rays_d, sample_depth, sample_color
 
@@ -219,8 +218,9 @@ def raw2outputs_nerf_color(raw, z_vals, rays_d, occupancy=False, device='cuda:0'
         weights (tensor, N_rays*N_samples): weights assigned to each sampled color.
     """
 
-    def raw2alpha(raw, dists, act_fn=F.relu): return 1. - \
-        torch.exp(-act_fn(raw)*dists)
+    def raw2alpha(raw, dists, act_fn=F.relu):
+        return 1. - torch.exp(-act_fn(raw)*dists)
+    
     dists = z_vals[..., 1:] - z_vals[..., :-1]
     dists = dists.float()
     dists = torch.cat([dists, torch.Tensor([1e10]).float().to(

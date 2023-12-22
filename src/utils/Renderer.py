@@ -20,11 +20,12 @@ class Renderer(object):
 
         self.H, self.W, self.fx, self.fy, self.cx, self.cy = slam.H, slam.W, slam.fx, slam.fy, slam.cx, slam.cy
 
+        # render_batch_ray 中被调用
     def eval_points(self, p, decoders, c=None, stage='color', device='cuda:0'):
         """
         Evaluates the occupancy and/or color value for the points.
-
-        Args:
+        评估点的占据、颜色值
+      Args:
             p (tensor, N*3): Point coordinates.
             decoders (nn.module decoders): Decoders.
             c (dicts, optional): Feature grids. Defaults to None.
@@ -40,15 +41,16 @@ class Renderer(object):
         rets = []
         for pi in p_split:
             # mask for points out of bound
+            # 检查点是否在边界内
             mask_x = (pi[:, 0] < bound[0][1]) & (pi[:, 0] > bound[0][0])
             mask_y = (pi[:, 1] < bound[1][1]) & (pi[:, 1] > bound[1][0])
             mask_z = (pi[:, 2] < bound[2][1]) & (pi[:, 2] > bound[2][0])
             mask = mask_x & mask_y & mask_z
 
             pi = pi.unsqueeze(0)
-            if self.nice:
-                ret = decoders(pi, c_grid=c, stage=stage)
-            else:
+            if self.nice:# nice-slam
+                ret = decoders(pi, c_grid=c, stage=stage)# 调用特征网格
+            else:# imap
                 ret = decoders(pi, c_grid=None)
             ret = ret.squeeze(0)
             if len(ret.shape) == 1 and ret.shape[0] == 4:
@@ -60,6 +62,17 @@ class Renderer(object):
         ret = torch.cat(rets, dim=0)
         return ret
 
+    # 最重要
+    # 渲染一批采样光线的【颜色】【深度】【不确定性】
+    # 在 Mapper.py Tracker.py Mesher.py 中被调用
+    '''
+    步骤：
+        1、根据光线起点和方向，以及设定的参数，计算出一系列采样点。
+        2、若存在真实深度图像(gt_depth)，在深度附近采样更多点(N_surface)，从而提高渲染精度。
+        3、若使用线形插值/透视插值(self.lindisp)，则计算采样点的深度值。(z_vals)。
+        4、如果设定了扰动(self.perturb)，则对采样点进行随机扰动以增加渲染多样性。
+        5、根据采样点的空间位置(通过光线方程计算得到)，生成一个点集(pointsf)。
+    '''
     def render_batch_ray(self, c, decoders, rays_d, rays_o, device, stage, gt_depth=None):
         """
         Render color, depth and uncertainty of a batch of rays.
@@ -79,8 +92,8 @@ class Renderer(object):
             color (tensor): rendered color.
         """
 
-        N_samples = self.N_samples
-        N_surface = self.N_surface
+        N_samples = self.N_samples  # nice-slam 中是 32
+        N_surface = self.N_surface  # nice-slam 中是 16
         N_importance = self.N_importance
 
         N_rays = rays_o.shape[0]
@@ -95,11 +108,11 @@ class Renderer(object):
             gt_depth_samples = gt_depth.repeat(1, N_samples)
             near = gt_depth_samples*0.01
 
+        # 计算每根光线与边界相交的最远距离
         with torch.no_grad():
             det_rays_o = rays_o.clone().detach().unsqueeze(-1)  # (N, 3, 1)
             det_rays_d = rays_d.clone().detach().unsqueeze(-1)  # (N, 3, 1)
-            t = (self.bound.unsqueeze(0).to(device) -
-                 det_rays_o)/det_rays_d  # (N, 3, 2)
+            t = (self.bound.unsqueeze(0).to(device) - det_rays_o)/det_rays_d  # (N, 3, 2)
             far_bb, _ = torch.min(torch.max(t, dim=2)[0], dim=1)
             far_bb = far_bb.unsqueeze(-1)
             far_bb += 0.01
@@ -109,6 +122,8 @@ class Renderer(object):
             far = torch.clamp(far_bb, 0,  torch.max(gt_depth*1.2))
         else:
             far = far_bb
+
+        # 需要表面采样
         if N_surface > 0:
             if False:
                 # this naive implementation downgrades performance
@@ -138,16 +153,14 @@ class Renderer(object):
                 z_vals_surface = torch.zeros(
                     gt_depth.shape[0], N_surface).to(device).double()
                 gt_none_zero_mask = gt_none_zero_mask.squeeze(-1)
-                z_vals_surface[gt_none_zero_mask,
-                               :] = z_vals_surface_depth_none_zero
+                z_vals_surface[gt_none_zero_mask,:] = z_vals_surface_depth_none_zero
                 near_surface = 0.001
                 far_surface = torch.max(gt_depth)
                 z_vals_surface_depth_zero = near_surface * \
                     (1.-t_vals_surface) + far_surface * (t_vals_surface)
                 z_vals_surface_depth_zero.unsqueeze(
                     0).repeat((~gt_none_zero_mask).sum(), 1)
-                z_vals_surface[~gt_none_zero_mask,
-                               :] = z_vals_surface_depth_zero
+                z_vals_surface[~gt_none_zero_mask,:] = z_vals_surface_depth_zero
 
         t_vals = torch.linspace(0., 1., steps=N_samples, device=device)
 
@@ -169,13 +182,15 @@ class Renderer(object):
             z_vals, _ = torch.sort(
                 torch.cat([z_vals, z_vals_surface.double()], -1), -1)
 
+        # P = o + dr
         pts = rays_o[..., None, :] + rays_d[..., None, :] * \
             z_vals[..., :, None]  # [N_rays, N_samples+N_surface, 3]
         pointsf = pts.reshape(-1, 3)
 
-        raw = self.eval_points(pointsf, decoders, c, stage, device)
+        raw = self.eval_points(pointsf, decoders, c, stage, device) # 返回估计的占据、颜色值
         raw = raw.reshape(N_rays, N_samples+N_surface, -1)
 
+        # 将 raw 预测值与深度信息、占据信息等传入函数，得到真正有用的深度图、深度方差、RGB颜色、权重
         depth, uncertainty, color, weights = raw2outputs_nerf_color(
             raw, z_vals, rays_d, occupancy=self.occupancy, device=device)
         if N_importance > 0:
