@@ -167,8 +167,8 @@ def get_camera_from_tensor(inputs):
     N = len(inputs.shape)
     if N == 1:
         inputs = inputs.unsqueeze(0)
-    quad, T = inputs[:, :4], inputs[:, 4:]
-    R = quad2rotation(quad)
+    quad, T = inputs[:, :4], inputs[:, 4:]# 分离出旋转（四元数表示）和平移T
+    R = quad2rotation(quad)# 四元数转换成旋转矩阵
     RT = torch.cat([R, T[:, :, None]], 2)
     if N == 1:
         RT = RT[0]

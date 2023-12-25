@@ -83,10 +83,10 @@ class Tracker(object):
         device = self.device    # 设备
         H, W, fx, fy, cx, cy = self.H, self.W, self.fx, self.fy, self.cx, self.cy# 获取内外参
         optimizer.zero_grad()   # 清零梯度
-        c2w = get_camera_from_tensor(camera_tensor)
+        c2w = get_camera_from_tensor(camera_tensor) # 返回值是 RT， R 的表示是旋转矩阵
         Wedge = self.ignore_edge_W
         Hedge = self.ignore_edge_H
-        batch_rays_o, batch_rays_d, batch_gt_depth, batch_gt_color = get_samples(
+        batch_rays_o, batch_rays_d, batch_gt_depth, batch_gt_color = get_samples(# 获取要采样的像素
             Hedge, H-Hedge, Wedge, W-Wedge, batch_size, H, W, fx, fy, cx, cy, c2w, gt_depth, gt_color, self.device)
         if self.nice:
             # should pre-filter those out of bounding box depth value
@@ -102,7 +102,7 @@ class Tracker(object):
             batch_gt_depth = batch_gt_depth[inside_mask]
             batch_gt_color = batch_gt_color[inside_mask]
 
-        depth, uncertainty, color = self.renderer.render_batch_ray(
+        depth, uncertainty, color = self.renderer.render_batch_ray(# Render color, depth and uncertainty of a batch of rays.
             self.c, self.decoders, batch_rays_d, batch_rays_o,  self.device, stage='color',  gt_depth=batch_gt_depth)
 
         uncertainty = uncertainty.detach()
@@ -112,12 +112,11 @@ class Tracker(object):
         else:
             mask = batch_gt_depth > 0
 
-        # 计算 loss （基于深度） 误差绝对值/方差
+        # 计算 loss （基于深度） 误差绝对值/方差                                👇 确保被除数不为0
         loss = (torch.abs(batch_gt_depth-depth) / torch.sqrt(uncertainty+1e-10))[mask].sum()
 
         if self.use_color_in_tracking:# 启用颜色跟踪的情况
-            color_loss = torch.abs(
-                batch_gt_color - color)[mask].sum()
+            color_loss = torch.abs(batch_gt_color - color)[mask].sum()
             loss += self.w_color_loss*color_loss # 加入 loss
 
         loss.backward() # 触发反向传播，计算梯度
@@ -218,11 +217,14 @@ class Tracker(object):
                 candidate_cam_tensor = None# 最优相机位姿
                 current_min_loss = 10000000000.# 最小 loss
                 for cam_iter in range(self.num_cam_iters):
+                    # 独立学习率
                     if self.seperate_LR:
                         camera_tensor = torch.cat([quad, T], 0).to(self.device)
 
+                    # 可视化
                     self.visualizer.vis(idx, cam_iter, gt_depth, gt_color, camera_tensor, self.c, self.decoders)
 
+                    # 批量优化相机位姿，得到loss
                     loss = self.optimize_cam_in_batch(
                         camera_tensor, gt_color, gt_depth, self.tracking_pixels, optimizer_camera)
 
@@ -236,13 +238,13 @@ class Tracker(object):
                                 f'Re-rendering loss: {initial_loss:.2f}->{loss:.2f} ' +
                                 f'camera tensor error: {initial_loss_camera_tensor:.4f}->{loss_camera_tensor:.4f}')
                     if loss < current_min_loss:
-                        current_min_loss = loss
+                        current_min_loss = loss# 更新当前最小loss
                         candidate_cam_tensor = camera_tensor.clone().detach()
                 bottom = torch.from_numpy(np.array([0, 0, 0, 1.]).reshape([1, 4])).type(torch.float32).to(self.device)
                 # 更新最优相机姿态
                 c2w = get_camera_from_tensor(candidate_cam_tensor.clone().detach())
                 c2w = torch.cat([c2w, bottom], dim=0)
-            self.estimate_c2w_list[idx] = c2w.clone().cpu() # 保存 c2w 值
+            self.estimate_c2w_list[idx] = c2w.clone().cpu() # 保存 c2w 值到 list 中
             self.gt_c2w_list[idx] = gt_c2w.clone().cpu()    # 保存 gt_c2w
             pre_c2w = c2w.clone()   # 设置 pre_c2w 值，用于（用速度不变假设）更新位姿
             self.idx[0] = idx
