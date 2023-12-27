@@ -133,7 +133,7 @@ class Tracker(object):
             if self.verbose:
                 print('Tracking: update the parameters from mapping')
             self.decoders = copy.deepcopy(self.shared_decoders).to(self.device)# 更新解码器（网络）
-            for key, val in self.shared_c.items():
+            for key, val in self.shared_c.items():  # 遍历特征网格的列表
                 val = val.clone().to(self.device)
                 self.c[key] = val
             self.prev_mapping_idx = self.mapping_idx[0].clone()
@@ -187,6 +187,8 @@ class Tracker(object):
 
             else:# 估计当前帧先验（位姿）
                 gt_camera_tensor = get_tensor_from_camera(gt_c2w)
+
+                # 估计新一帧相机的位姿
                 if self.const_speed_assumption and idx-2 >= 0:# 恒定速度假设
                     pre_c2w = pre_c2w.float()
                     delta = pre_c2w@self.estimate_c2w_list[idx-2].to(device).float().inverse()
@@ -194,23 +196,24 @@ class Tracker(object):
                 else:
                     estimated_new_cam_c2w = pre_c2w
 
+                # 创建相机位姿优化器
                 camera_tensor = get_tensor_from_camera(estimated_new_cam_c2w.detach())
                 if self.seperate_LR:# 分离 旋转和平移的学习率
                     camera_tensor = camera_tensor.to(device).detach()
-                    T = camera_tensor[-3:]# 平移 后三列
-                    quad = camera_tensor[:4]# 旋转 前四列
-                    cam_para_list_quad = [quad]
-                    quad = Variable(quad, requires_grad=True)
-                    T = Variable(T, requires_grad=True)
-                    camera_tensor = torch.cat([quad, T], 0)
-                    cam_para_list_T = [T]
-                    cam_para_list_quad = [quad]
-                    optimizer_camera = torch.optim.Adam([{'params': cam_para_list_T, 'lr': self.cam_lr},
+                    T = camera_tensor[-3:]      # 平移 后三列
+                    quad = camera_tensor[:4]    # 旋转 前四列
+                    cam_para_list_quad = [quad] # 将其变成列表
+                    quad = Variable(quad, requires_grad=True)   # 改变其数据类型
+                    T = Variable(T, requires_grad=True)         # 改变其数据类型
+                    camera_tensor = torch.cat([quad, T], 0) # 重新将 quad 和 T 拼接在一起
+                    cam_para_list_T = [T]       # 保存为列表
+                    cam_para_list_quad = [quad] # 保存为列表
+                    optimizer_camera = torch.optim.Adam([{'params': cam_para_list_T, 'lr': self.cam_lr},# 创建优化器
                                                          {'params': cam_para_list_quad, 'lr': self.cam_lr*0.2}])
                 else:
                     camera_tensor = Variable(camera_tensor.to(device), requires_grad=True)
                     cam_para_list = [camera_tensor]
-                    optimizer_camera = torch.optim.Adam(cam_para_list, lr=self.cam_lr)
+                    optimizer_camera = torch.optim.Adam(cam_para_list, lr=self.cam_lr)# 创建优化器
 
                 # 在 for 循环中要用到的变量
                 initial_loss_camera_tensor = torch.abs(gt_camera_tensor.to(device)-camera_tensor).mean().item()# 平均绝对误差
@@ -224,7 +227,7 @@ class Tracker(object):
                     # 可视化
                     self.visualizer.vis(idx, cam_iter, gt_depth, gt_color, camera_tensor, self.c, self.decoders)
 
-                    # 批量优化相机位姿，得到loss
+                    # 批量优化相机位姿，得到 loss
                     loss = self.optimize_cam_in_batch(
                         camera_tensor, gt_color, gt_depth, self.tracking_pixels, optimizer_camera)
 
@@ -244,7 +247,8 @@ class Tracker(object):
                 # 更新最优相机姿态
                 c2w = get_camera_from_tensor(candidate_cam_tensor.clone().detach())
                 c2w = torch.cat([c2w, bottom], dim=0)
-            self.estimate_c2w_list[idx] = c2w.clone().cpu() # 保存 c2w 值到 list 中
+            ################# 保存计算出的相机位姿 ###################
+            self.estimate_c2w_list[idx] = c2w.clone().cpu() # 保存 c2w 值到 list 中 ！！
             self.gt_c2w_list[idx] = gt_c2w.clone().cpu()    # 保存 gt_c2w
             pre_c2w = c2w.clone()   # 设置 pre_c2w 值，用于（用速度不变假设）更新位姿
             self.idx[0] = idx
